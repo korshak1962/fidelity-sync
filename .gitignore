@@ -1,0 +1,15 @@
+# Secrets -- never commit
+credentials/
+*.json.key
+
+# Local state -- machine-specific, not shared
+state/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Claude Code local metadata (keep CLAUDE.md and TASK.md, exclude the rest if present)
+.claude/settings.local.json

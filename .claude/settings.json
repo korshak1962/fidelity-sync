@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "PowerShell(pip *)",
+      "PowerShell(pip3 *)",
+      "PowerShell(python *)",
+      "PowerShell(python3 *)",
+      "Bash(ls *)",
+      "Bash(dir *)",
+      "PowerShell(dir *)",
+      "PowerShell(ls *)",
+      "PowerShell(Get-ChildItem *)",
+      "Bash(*)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(del *)",
+      "Bash(unlink *)",
+      "Bash(shred *)",
+      "Bash(git clean *)"
+    ]
+  }
+}

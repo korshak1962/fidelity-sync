@@ -203,11 +203,19 @@ def _write_charts(client: SheetsClient, ws, rows: list, recreate: bool = False) 
 
 
 if __name__ == "__main__":
-    c = SheetsClient(config.SPREADSHEET_ID, config.CREDENTIALS_PATH)
-    rows = build(c)
-    if "--dry-run" in __import__("sys").argv:
-        for r in rows:
+    import sys
+    from main import log
+
+    if "--dry-run" in sys.argv:
+        for r in build(SheetsClient(config.SPREADSHEET_ID, config.CREDENTIALS_PATH)):
             print(r)
-    else:
-        write(c, rows, recreate_charts="--recreate-charts" in __import__("sys").argv)
-        print(f"{ANALYSIS_TAB}: {len(rows)} rows written")
+        sys.exit()
+    # Runs unattended after the weekly import, so outcomes go to the run log.
+    try:
+        c = SheetsClient(config.SPREADSHEET_ID, config.CREDENTIALS_PATH)
+        rows = build(c)
+        write(c, rows, recreate_charts="--recreate-charts" in sys.argv)
+        log(f"{ANALYSIS_TAB}: {len(rows)} rows written", config.LOG_PATH)
+    except Exception as e:
+        log(f"ERROR refreshing {ANALYSIS_TAB} tab: {e!r}", config.LOG_PATH)
+        raise

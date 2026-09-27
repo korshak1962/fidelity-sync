@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Context for Claude Code working in this repo. Read this first; `README.md`
+Context for coding agents (Codex etc.) working in this repo; kept in sync with `CLAUDE.md`. Read this first; `README.md`
 has the one-time Google Cloud setup. (`TASK.md` describes an earlier,
 completed task -- history only.)
 

@@ -14,7 +14,7 @@ A weekly sync from a Fidelity brokerage CSV export into a Google Sheet
 | `shares` | `main.py` | weighted-average lots per ticker, buys matched to sells |
 | `option` | `main.py` | one row per underlying+type+strike+expiry+open date |
 | `DIVIDEND` | `main.py` | dividend rows, content-deduped against the sheet |
-| `analysis` | `analysis.py` | best/worst 5 trades by %, P&L by month, two charts |
+| `analysis` | `analysis.py` | best/worst 5 trades by %, P&L and win rate by month, four charts |
 | `buffer` | the user | never touched by any script |
 
 Nothing is written to MySQL or any other store.
@@ -89,10 +89,15 @@ script in `state/backup_20260926/`.
 - Rankings: shares by price-change %, options by P&L as % of premium --
   ranked separately because the two % are not comparable. Rows still at the
   $100 transfer placeholder are left out.
-- Monthly P&L by closing date, plus dividends and a running total. Months are
+- Monthly P&L by closing date, plus dividends and a running total; next to it
+  (columns H-M) the win rate per month -- shares, options, combined and
+  cumulative. A win is a trade closed with P&L > 0; placeholder rows are left
+  out. Months are
   written as real dates (shown `yyyy-mm`) so the chart axis is a time axis --
   Sheets offers axis gridlines only on a date axis.
-- The two charts are created once and then left alone, so formatting the user
+- Four charts in a 2x2 grid from column O (P&L by month | win rate by month,
+  cumulative P&L | cumulative win rate). Each is created once, matched by
+  title, and afterwards only moved, never redrawn -- so formatting the user
   set by hand in the chart editor (gridlines, which the Sheets API can't set)
   survives a refresh. Their range is open-ended, so new months appear by
   themselves. `--recreate-charts` deletes and redraws them (losing that

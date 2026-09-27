@@ -29,9 +29,11 @@ Column layout (1-indexed, matches your actual sheet):
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import gspread
+from gspread.http_client import BackOffHTTPClient
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
@@ -64,7 +66,9 @@ DIVIDEND_HEADER = ["Date", "Account", "Symbol", "Description", "Amount", "Type"]
 class SheetsClient:
     def __init__(self, spreadsheet_id: str, credentials_path: str):
         creds = Credentials.from_service_account_file(credentials_path, scopes=SCOPES)
-        self.gc = gspread.authorize(creds)
+        # BackOffHTTPClient retries 429 (60 writes/minute quota) instead of failing
+        # mid-upsert, which would leave rows written but not in the ledger.
+        self.gc = gspread.authorize(creds, http_client=BackOffHTTPClient)
         self.sh = self.gc.open_by_key(spreadsheet_id)
 
     # ---------- reading ----------
@@ -132,13 +136,19 @@ class SheetsClient:
                         ]],
                         range_name=f"C{row_num}:H{row_num}",
                     )
+                    if r.get("price_placeholder"):
+                        self._mark_placeholder_price(ws, row_num, closed=bool(_clean(r.get("sell_price"))))
                     updated += 1
                     continue
-            ws.append_row([
+            resp = ws.append_row([
                 r["ticker"], r["buy_date"], r["price"], r["qty"],
                 _clean(r.get("sell_price")), _clean(r.get("sell_date")),
                 _clean(r.get("pnl")), _clean(r.get("pnl_pct")),
-            ], value_input_option="USER_ENTERED")
+            ], value_input_option="USER_ENTERED", table_range="A1")
+            if r.get("price_placeholder"):
+                # updatedRange looks like "shares!A27:H27"
+                row_num = int(re.search(r"(\d+):", resp["updates"]["updatedRange"]).group(1))
+                self._mark_placeholder_price(ws, row_num, closed=bool(_clean(r.get("sell_price"))))
             inserted += 1
         return {"updated": updated, "inserted": inserted}
 
@@ -167,7 +177,7 @@ class SheetsClient:
                 _clean(r.get("close_date")), _clean(r.get("close_qty")),
                 _clean(r.get("close_price")),
                 _clean(r.get("pnl")),
-            ], value_input_option="USER_ENTERED")
+            ], value_input_option="USER_ENTERED", table_range="A1")
             inserted += 1
         return {"updated": updated, "inserted": inserted}
 
@@ -175,15 +185,30 @@ class SheetsClient:
         ws = self._get_or_create_dividend_tab(tab_name)
         existing_keys = self.get_dividend_keys(tab_name)
         new_rows = rows[~rows["dedup_key"].isin(existing_keys)]
-        for _, r in new_rows.iterrows():
-            ws.append_row(
-                [r["date"], r["account"], r["symbol"] if pd.notna(r["symbol"]) else "",
-                 r["description"], r["amount"], r["type"]],
-                value_input_option="USER_ENTERED",
-            )
+        # One append_rows call, not append_row per row: a quarter of history is
+        # ~60 dividends, which exceeds the 60 writes/minute Sheets API quota.
+        values = [
+            [r["date"], r["account"], r["symbol"] if pd.notna(r["symbol"]) else "",
+             r["description"], r["amount"], r["type"]]
+            for _, r in new_rows.iterrows()
+        ]
+        if values:
+            ws.append_rows(values, value_input_option="USER_ENTERED", table_range="A1")
         return len(new_rows)
 
     # ---------- helpers ----------
+
+    def _mark_placeholder_price(self, ws, row_num: int, closed: bool):
+        """Red buy price = placeholder (transfer-in, cost basis unknown) to be
+        corrected by hand. On a closed row P&L is written as formulas so it
+        follows the corrected price."""
+        ws.format(f"C{row_num}", {"textFormat": {"foregroundColor": {"red": 1, "green": 0, "blue": 0}}})
+        if closed:
+            n = row_num
+            ws.update(
+                values=[[f"=(E{n}-C{n})*D{n}", f"=(E{n}-C{n})/C{n}*100"]],
+                range_name=f"G{n}:H{n}", value_input_option="USER_ENTERED",
+            )
 
     def _get_or_create_dividend_tab(self, tab_name: str):
         try:
@@ -205,8 +230,15 @@ class SheetsClient:
         for i, row in enumerate(values, start=1):
             if len(row) < 5:
                 continue
+            # Strike compared as a number: the sheet displays "25.00", the
+            # matcher produces 25.0 -- a string compare never matched, so every
+            # close of a sheet-seeded leg was appended as a duplicate row.
+            try:
+                same_strike = abs(float(row[2]) - float(strike)) < 1e-9
+            except (TypeError, ValueError):
+                same_strike = False
             if (row[0].strip() == underlying and row[1].strip() == option_type
-                    and str(row[2]).strip() == str(strike) and row[3].strip() == expiration
+                    and same_strike and row[3].strip() == expiration
                     and row[4].strip() == open_date):
                 return i
         return None

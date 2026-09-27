@@ -38,6 +38,11 @@ import pandas as pd
 
 from state import Ledger, transaction_id
 
+# Shares transferred in from another broker carry no price in the CSV. They
+# are booked at this placeholder and flagged (red in the sheet) so the real
+# cost basis can be typed in by hand.
+TRANSFER_IN_PLACEHOLDER_PRICE = 100.0
+
 
 @dataclass
 class _OpenLot:
@@ -46,6 +51,7 @@ class _OpenLot:
     cost: float = 0.0  # total dollar cost basis
     from_sheet: bool = False  # True if seeded from an existing sheet row
     dirty: bool = False  # True if modified by a new (unprocessed) transaction this run
+    placeholder: bool = False  # True if any shares came from a transfer-in at the placeholder price
 
     @property
     def avg_price(self) -> float:
@@ -61,10 +67,14 @@ def _seed_lots(existing_open_rows: Optional[pd.DataFrame]) -> dict:
         buy_date = pd.to_datetime(r["buy_date"], dayfirst=True)
         qty = float(r["qty"])
         cost = qty * float(r["price"])
+        # A sheet price still equal to the placeholder hasn't been corrected yet.
+        placeholder = abs(float(r["price"]) - TRANSFER_IN_PLACEHOLDER_PRICE) < 1e-9
         existing = lots.get(key)
         if existing is None:
-            lots[key] = _OpenLot(buy_date=buy_date, qty=qty, cost=cost, from_sheet=True)
+            lots[key] = _OpenLot(buy_date=buy_date, qty=qty, cost=cost, from_sheet=True,
+                                 placeholder=placeholder)
         else:
+            existing.placeholder = existing.placeholder or placeholder
             # Two open rows for the same ticker in the sheet -- merge via the
             # same weighted-average rule used elsewhere, keep the earlier
             # buy_date as the position's start.
@@ -87,9 +97,12 @@ def build_shares_rows(
     """
     exclude_tickers = exclude_tickers or set()
 
-    trades = df[df["row_type"].isin(["SHARE_BUY", "SHARE_SELL"])].copy()
+    trades = df[df["row_type"].isin(["SHARE_BUY", "REINVESTMENT", "SHARE_TRANSFER_IN", "SHARE_SELL"])].copy()
     trades = trades[~trades["symbol"].isin(exclude_tickers)]
-    trades = trades.sort_values("run_date")
+    # Buys before sells within a day: Fidelity's row order inside a day is
+    # not chronological, and a same-day sell seen first would be skipped.
+    trades["_rank"] = (trades["row_type"] == "SHARE_SELL").astype(int)
+    trades = trades.sort_values(["run_date", "_rank"], kind="stable")
 
     lots = _seed_lots(existing_open_rows)
     rows = []
@@ -108,14 +121,20 @@ def build_shares_rows(
         amount = r["amount"]
         date = r["run_date"]
 
-        if r["row_type"] == "SHARE_BUY":
+        # Dividend reinvestments are buys at their reinvestment price.
+        if r["row_type"] in ("SHARE_BUY", "REINVESTMENT", "SHARE_TRANSFER_IN"):
+            transfer = r["row_type"] == "SHARE_TRANSFER_IN"
+            if transfer:
+                price = TRANSFER_IN_PLACEHOLDER_PRICE
             lot = lots.get(key)
             if lot is None or lot.qty == 0:
-                lots[key] = _OpenLot(buy_date=date, qty=qty, cost=qty * price, dirty=True)
+                lots[key] = _OpenLot(buy_date=date, qty=qty, cost=qty * price, dirty=True,
+                                     placeholder=transfer)
             else:
                 lot.qty += qty
                 lot.cost += qty * price
                 lot.dirty = True
+                lot.placeholder = lot.placeholder or transfer
             continue
 
         # SHARE_SELL: quantity is negative in the CSV
@@ -167,6 +186,7 @@ def build_shares_rows(
                 "status": "CLOSED",
                 "row_key": row_key,
                 "matches_existing_open_row": fully_closes_seeded_lot,
+                "price_placeholder": lot.placeholder,
             }
         )
 
@@ -198,6 +218,7 @@ def build_shares_rows(
                 "status": "OPEN",
                 "row_key": f"{ticker}|{lot.buy_date.date()}|OPEN",
                 "matches_existing_open_row": lot.from_sheet,
+                "price_placeholder": lot.placeholder,
             }
         )
 

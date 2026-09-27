@@ -143,6 +143,10 @@ def _classify_row(row) -> str:
         return "SHARE_BUY"
     if action.startswith("YOU SOLD"):
         return "SHARE_SELL"
+    # Shares moved in from another broker: no price in the CSV, so the
+    # matcher books them as a buy at a placeholder price (see shares_matcher).
+    if action.startswith("RECEIVED FROM YOU") and row["symbol"] and row["quantity"] > 0:
+        return "SHARE_TRANSFER_IN"
     return "OTHER"
 
 

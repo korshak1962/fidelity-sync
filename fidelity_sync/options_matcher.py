@@ -86,7 +86,10 @@ def build_option_rows(
     opt_rows = df[df["row_type"].isin(
         ["OPTION_OPEN", "OPTION_CLOSE", "OPTION_EXPIRED", "OPTION_ASSIGNED"]
     )].copy()
-    opt_rows = opt_rows.sort_values("run_date")
+    # Opens before closes within a day: Fidelity's row order inside a day is
+    # not chronological, and a same-day close seen first would be skipped.
+    opt_rows["_rank"] = (opt_rows["row_type"] != "OPTION_OPEN").astype(int)
+    opt_rows = opt_rows.sort_values(["run_date", "_rank"], kind="stable")
 
     legs = _seed_legs(existing_open_rows)
     rows = []

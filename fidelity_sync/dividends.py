@@ -33,12 +33,20 @@ def build_dividend_rows(df: pd.DataFrame) -> pd.DataFrame:
     mask = df["row_type"] == "DIVIDEND"
     sub = df.loc[mask].copy()
 
+    # A week without dividends: DataFrame.apply on an empty frame returns an
+    # empty DataFrame, not a Series, and pd.DataFrame(...) below then fails with
+    # "Buffer has wrong number of dimensions" (the 2026-10-24 / 11-07 runs).
+    if sub.empty:
+        description = pd.Series(index=sub.index, dtype=object)
+    else:
+        description = sub.apply(_clean_description, axis=1)
+
     out = pd.DataFrame(
         {
             "date": sub["run_date"].dt.strftime("%m/%d/%Y"),
             "account": sub["account"],
             "symbol": sub["symbol"].replace("", pd.NA),
-            "description": sub.apply(_clean_description, axis=1),
+            "description": description,
             "amount": sub["amount"],
             "type": sub["row_type"],
         }
